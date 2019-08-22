@@ -112,7 +112,7 @@ if __name__ == "__main__":
         predictions_fname=prediction_filename
     )
 
-    prediction_filename = "./predictions/PRED_2019_08_22T011853352366_datasets_h5synthetic_dataset_1YEAR_UKDALE_house1_2019_08h5.h5"
+    # prediction_filename = "./predictions/PRED_2019_08_22T011853352366_datasets_h5synthetic_dataset_1YEAR_UKDALE_house1_2019_08h5.h5"
     metric_results = calc_metrics(
         prediction_filename,
         gt_data=data_test.buildings[b].elec
