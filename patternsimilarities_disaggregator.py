@@ -3,6 +3,7 @@ from __future__ import print_function, division
 import random
 from datetime import datetime
 from sys import stdout
+from time import time
 
 import pandas as pd
 
@@ -31,6 +32,21 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
 
     def __init__(self):
         self.MODEL_NAME = "PatternSimilaritiesUDELAR"
+
+    def _calc_M(self, main, tolerance):
+        print("\n>Calculating M...", end="")
+        start_calc_M = time()
+
+        d = self.time_interval_neighbourhood
+        M = main.rolling(2 * d, center=True).apply(
+            lambda x: x[x > (x[d] - tolerance)].size,
+            raw=True
+        )
+        M[:d] = 0
+        M[-d:] = 0
+
+        print("END in {}s".format(time() - start_calc_M))
+        return M
 
     def train(
         self,
@@ -64,8 +80,6 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
         self.sample_period = sample_period
         self.meter_series = {}
 
-        d = self.time_interval_neighbourhood
-
         # Lines 1-9 of algorithm
         self.M_z = {}
         # Evaluate for each main of each building
@@ -74,23 +88,16 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
             b_num = main.building()
             aggregated_meter = self._get_power_series_all_data(main)
             amount_train_mains_records = aggregated_meter.size
-            self.M_z[b_num] = []
-            # Fill the beginning with zeros (as many as d)
-            for i in range(d):
-                self.M_z[b_num].append(0)
+            print(
+                "Training with {} records from building {}...".format(
+                    amount_train_mains_records, b_num,
+                ),
+                end=""
+            )
+            start_train_b = time()
+            self.M_z[b_num] = self._calc_M(aggregated_meter, self.tolerance)
 
-            for i in range(1 + d, amount_train_mains_records - d):
-                self.M_z[b_num].append(
-                    # Count how many neightbour consumption are greater
-                    # Lines 3-8 of algorithm
-                    aggregated_meter[i - d : i + d][
-                        aggregated_meter > (aggregated_meter[i] - self.tolerance)
-                    ].size
-                )
-
-            # Fill the end with zeros (as many as d)
-            for i in range(d):
-                self.M_z[b_num].append(0)
+            print("END in {}".format(time() - start_train_b))
 
     def train_on_chunk(self, chunk, meter):
         """Signature is fine for site meter dataframes (unsupervised
@@ -130,9 +137,18 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
             return serie
         else:
             self.meter_series[meter.building()][meter.instance()] = meter.power_series_all_data(
-                sample_period=self.sample_period
+                sample_period=self.sample_period,
+                resample_kwargs={'how': 'first'}  # The consumption at the instant
             )
             return self.meter_series[meter.building()][meter.instance()]
+
+    def _calc_M_x(self, mains):
+        # Load the data (serie of aggregated) to be disaggregated
+        mains_to_dissag = self._get_power_series_all_data(mains)
+        # Lines 10-18 of algorithm
+        M_x = self._calc_M(mains_to_dissag, self.tolerance)
+
+        return M_x
 
     def disaggregate(self, mains, output_datastore):
         """Passes each chunk from mains generator to disaggregate_chunk() and
@@ -157,21 +173,7 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
         amount_mains_to_dissag_records = mains_to_dissag.size
 
         # Lines 10-18 of algorithm
-        M_x = []
-        # Fill the beginning with zeros (as many as d)
-        for i in range(d):
-            M_x.append(0)
-        for i in range(1 + d, amount_mains_to_dissag_records - d):
-            M_x.append(
-                # Count how many neightbour consumption are greater
-                # Lines 12-17 of algorithm
-                mains_to_dissag[i - d : i + d][
-                    mains_to_dissag > (mains_to_dissag[i] - self.tolerance)
-                ].size
-            )
-        # Fill the end with zeros (as many as d)
-        for i in range(d):
-            M_x.append(0)
+        M_x = self._calc_M_x(mains)
 
         # Indicates if metadaca must be saved
         data_is_available = False
@@ -185,39 +187,45 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
 
         train_mains = self._get_train_mains()
         # Lines 19 to end
+        # TODO: Porque comienza en d ??? la prediccion deberia ser en toda la serie!
         for i in range(1 + d, amount_mains_to_dissag_records - d):
+            if i % 150 == 0:
+                print("Dissagregating for i={} ...".format(i), end="")
+                start = time()
+                stdout.flush()
             I = set()
             for main in train_mains:
                 b_num = main.building()
                 aggregated_meter = self._get_power_series_all_data(main)
                 aggregated_meter_amount = aggregated_meter.size
 
-                for j in range(d, aggregated_meter_amount - d):
-                    if (
-                        mains_to_dissag[i] > self.H
-                        and abs(aggregated_meter[j] - mains_to_dissag[i])
-                        <= self.neighbourhood
-                    ):
-                        I.add((b_num, j))
+                I = []
+                if mains_to_dissag[i] > self.H:
+                    a = abs((aggregated_meter - mains_to_dissag[i])).reset_index()[d:aggregated_meter_amount-d]
+                    a = a[a.power.active <= self.neighbourhood].index.values
+                    I = [(b_num, x) for x in a]
 
             # Lines 26 to 34
             # I is a set with tuples (building number <int>, position of record <int>)
-            I = list(I)  # to assure that keeps order
             if I:
                 diff_similarities = [
                     (j_b, j_i, abs(self.M_z[j_b][j_i] - M_x[i]))
                     for j_b, j_i in I
                 ]
             else:
-                diff_similarities = []
+                diff_similarities = pd.np.empty((0,3))
                 for main in self._get_train_mains():
                     main_serie = self._get_power_series_all_data(main)
                     b_num = main.building()
 
-                    diff_similarities += [
-                        (b_num, index, abs(value - mains_to_dissag[i]))
-                        for index, value in enumerate(main_serie)
-                    ]
+                    diff_vec = abs(
+                        main_serie - mains_to_dissag[i]
+                    ).reset_index().reset_index()
+                    diff_vec['b'] = b_num
+                    diff_similarities = pd.np.vstack(
+                        (diff_similarities, diff_vec.iloc[:, [-1, 0, -2]])
+                    )
+
             del I
             min_diff = min(diff_similarities, key=lambda x: x[2])[2]
             J = [(b, i) for b, i, val in diff_similarities if val == min_diff]
@@ -226,6 +234,8 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
             # the current moment of dissagregation. Prediction consist in taking the
             # values of the appliances at this moment as the prediction.
             build_pred, positin_pred = random.choice(J)
+            positin_pred = int(positin_pred)
+            # print("Position pred {}".format(positin_pred))
             del J
 
             main = None
@@ -263,6 +273,9 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
 
             if i % 100 == 0:
                 print("{}...".format(i), end="")
+                stdout.flush()
+            if i % 150 == 0:
+                print("END in {}".format(time() - start))
                 stdout.flush()
 
         print("END TESTING")

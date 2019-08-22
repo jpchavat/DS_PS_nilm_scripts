@@ -7,10 +7,9 @@ from os.path import join
 from sys import stdout
 
 from nilmtk import DataStore
-from nilmtk.utils import get_datastore
 from nilmtk.datastore import Key
 from nilmtk.measurement import LEVEL_NAMES
-from nilmtk.utils import get_module_directory, check_directory_exists
+from nilmtk.utils import get_datastore, get_module_directory, check_directory_exists
 from nilm_metadata import save_yaml_to_datastore
 
 

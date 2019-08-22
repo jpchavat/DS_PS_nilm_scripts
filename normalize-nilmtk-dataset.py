@@ -6,10 +6,9 @@ import pandas as pd
 import numpy as np
 from os.path import join
 
-# from nilmtk.utils import get_datastore
 import sys
-sys.path.insert(0, '../../nilmtk')
-sys.path.insert(0, '../../nilmtk_metadata')
+sys.path.insert(0, '/Users/jp/Documents/FIng/nilmtk')
+sys.path.insert(0, '/Users/jp/Documents/FIng/nilmtk_metadata')
 from nilmtk import DataSet, version, MeterGroup
 
 print("NILMTK version {}".format(version.version))
