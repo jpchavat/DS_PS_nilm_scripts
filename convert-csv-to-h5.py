@@ -2,9 +2,19 @@ import glob
 import os
 from datetime import datetime
 
+import matplotlib
+# Comment to see plots in UI
+matplotlib.use('Agg')  # avoid using tkinter (not installed in cluster.uy)
+
 import pandas as pd
 from os.path import join
 from sys import stdout
+
+import sys
+sys.path.insert(0, '/Users/jp/Documents/FIng/nilmtk')
+sys.path.insert(0, '/Users/jp/Documents/FIng/nilmtk_metadata')
+sys.path.insert(0, '/clusteruy/home/jpchavat/nilmtk')
+sys.path.insert(0, '/clusteruy/home/jpchavat/nilm_metadata')
 
 from nilmtk import DataStore
 from nilmtk.datastore import Key
@@ -73,11 +83,9 @@ def _convert(input_path: str, store: DataStore) -> None:
             chan_df = pd.read_csv(
                 csv_filename,
                 index_col="datetime",
-                # parse_dates=["datetime"],
-                # date_parser=pd.to_datetime,
-                # dtype=[datetime, float]
+                parse_dates=[0],
             )
-            chan_df.index = pd.to_datetime(chan_df.index)
+            chan_df.index = chan_df.index.tz_localize('UTC')
             chan_df = chan_df.sort_index()
             chan_df.columns = pd.MultiIndex.from_tuples([("power", "active")])
 
@@ -92,5 +100,7 @@ def _convert(input_path: str, store: DataStore) -> None:
 if __name__ == "__main__":
     convert_data(
         input_path='/Users/jp/Documents/FIng/PruebasNILM/synthetic_dataset_1YEAR_UKDALE_house1',
-        output_dir='/Users/jp/Documents/FIng/PruebasNILM/synthetic_dataset_1YEAR_UKDALE_house1-datetimes.h5'
+        output_dir='/Users/jp/Documents/FIng/PruebasNILM/synthetic_dataset_1YEAR_UKDALE_house1-datetimes.h5'.format(
+            datetime.now().isoformat().replace(':', '').replace('.', '')
+        )
     )
