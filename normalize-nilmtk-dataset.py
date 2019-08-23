@@ -1,20 +1,26 @@
-from typing import Dict
-
+from __future__ import print_function
 import yaml
 import os
 import pandas as pd
 import numpy as np
 from os.path import join
 
+import matplotlib
+# Comment to see plots in UI
+matplotlib.use('Agg')  # avoid using tkinter (not installed in cluster.uy)
+
 import sys
 sys.path.insert(0, '/Users/jp/Documents/FIng/nilmtk')
 sys.path.insert(0, '/Users/jp/Documents/FIng/nilmtk_metadata')
+sys.path.insert(0, '/clusteruy/home/jpchavat/nilmtk')  # Clusteruy
+sys.path.insert(0, '/clusteruy/home/jpchavat/nilm_metadata')  # Clusteruy
 from nilmtk import DataSet, version, MeterGroup
 
 print("NILMTK version {}".format(version.version))
 
 
 def calc_stats(activations):
+    # type: (list) -> dict
     maxs_act = [act.max() for act in activations]
     avg = np.average(maxs_act)
     median = np.median(maxs_act)
@@ -50,9 +56,8 @@ def calc_stats(activations):
     }
 
 
-def calc_elec_stats(
-    elecs: MeterGroup, print_results: bool = False
-) -> Dict[str, Dict[str, any]]:
+def calc_elec_stats(elecs, print_results=False):
+    # type: (MeterGroup, bool) -> dict
     """Calculate stats for each appliance in `elecs`."""
     stats_str = (
         "Max of maxs: {max_max}\n"
@@ -83,7 +88,8 @@ def calc_elec_stats(
     return elecs_stats
 
 
-def plot_elecs(elecs: MeterGroup, elecs_stats: dict):
+def plot_elecs(elecs, elecs_stats):
+    # type: (MeterGroup, dict) -> None
     import matplotlib as plt
 
     # Plot the calculated stats and visualize best value to normalize
@@ -111,19 +117,20 @@ def plot_elecs(elecs: MeterGroup, elecs_stats: dict):
     plt.show()
 
 
-def create_normalized_consumption(
-    elecs: MeterGroup, stats: Dict[str, Dict[str, any]]
-) -> pd.DataFrame:
+def create_normalized_consumption(elecs, stats):
+    # type: (MeterGroup, dict) -> pd.DataFrame
     """Normalize ON values for each appliance with media value"""
     new_appliance_data = {}
 
     for e in ELEC_NAMES:
+        # Initialize with zeros
         new_appliance_data[e] = pd.Series(
             index=elecs[e].power_series_all_data().index, data=0.0
         )
-        new_appliance_data[e][elecs[e].power_series_all_data() > 0] = stats[e][
-            "median_std_1"
-        ]
+        # Replace zeros by median where consumption is greater than MIN_CONSUMPTION
+        new_appliance_data[e][
+            elecs[e].power_series_all_data() > MIN_CONSUMPTION
+        ] = stats[e]["median_std_1"]
 
     # Creates the DataFrame with index datetime and columns each appliance
     # normalized consumption
@@ -134,7 +141,8 @@ def create_normalized_consumption(
     return new_data
 
 
-def resample_norm_cons(norm_data: pd.DataFrame) -> pd.DataFrame:
+def resample_norm_cons(norm_data):
+    # type: (pd.DataFrame) -> pd.DataFrame
     """Resample the series and unify data into bins of 6 seconds"""
     new_data_resampled = norm_data.resample(
         "6S"
@@ -146,7 +154,8 @@ def resample_norm_cons(norm_data: pd.DataFrame) -> pd.DataFrame:
     return new_data_resampled
 
 
-def create_metadata_directories(base_dir: str) -> str:
+def create_metadata_directories(base_dir):
+    # type: (str) -> str
     """Creates directory structures for metadata"""
 
     base_dir_metadata = join(base_dir, "metadata")
@@ -162,7 +171,8 @@ def create_metadata_directories(base_dir: str) -> str:
     return base_dir
 
 
-def create_metadata_files(base_dir: str, data: DataSet) -> None:
+def create_metadata_files(base_dir, data):
+    # type: (str, DataSet) -> None
     """Creates the metadata files in the metadata directory structure"""
 
     # Creates a yaml metadata for the dataset
@@ -209,9 +219,8 @@ def create_metadata_files(base_dir: str, data: DataSet) -> None:
         yaml.dump(building_metadata, f, default_flow_style=False)
 
 
-def create_data_files(
-    norm_cons: pd.DataFrame, building: int, dest_format: str = "HDF"
-) -> None:
+def create_data_files(norm_cons, building, dest_format="HDF"):
+    # type: (pd.DataFrame, int, str) -> None
     """Creates the CSV/H5 file(s), depending on format selected (CSV/HDF),
     with the data of the meters/appliances of building `building`."""
     if dest_format == "CSV":
@@ -248,6 +257,7 @@ BUILDINGS = [1]
 BASE_DIR = "/Users/jp/Documents/FIng/PruebasNILM/synthetic_dataset_1YEAR_UKDALE_house1"
 ELEC_NAMES = ["fridge", "washer dryer", "kettle", "dish washer", "HTPC"]
 
+MIN_CONSUMPTION = 5.0
 
 if __name__ == "__main__":
     # Load the dataset
