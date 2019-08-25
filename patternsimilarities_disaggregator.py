@@ -34,13 +34,12 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
         self.MODEL_NAME = "PatternSimilaritiesUDELAR"
 
     def _calc_M(self, main, tolerance):
-        print("\n>Calculating M...", end="")
+        print("  Calculating M...", end="")
         start_calc_M = time()
 
         d = self.time_interval_neighbourhood
         M = main.rolling(2 * d, center=True).apply(
-            lambda x: x[x > (x[d] - tolerance)].size,
-            raw=True
+            lambda x: x[x > (x[d] - tolerance)].size, raw=True
         )
         M[:d] = 0
         M[-d:] = 0
@@ -80,6 +79,8 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
         self.sample_period = sample_period
         self.meter_series = {}
 
+        self._clean_power_series_all_data_cache()
+
         # Lines 1-9 of algorithm
         self.M_z = {}
         # Evaluate for each main of each building
@@ -89,15 +90,20 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
             aggregated_meter = self._get_power_series_all_data(main)
             amount_train_mains_records = aggregated_meter.size
             print(
-                "Training with {} records from building {}...".format(
-                    amount_train_mains_records, b_num,
-                ),
-                end=""
+                " > Training with {} records from building {}...".format(
+                    amount_train_mains_records, b_num
+                )
             )
             start_train_b = time()
             self.M_z[b_num] = self._calc_M(aggregated_meter, self.tolerance)
 
-            print("END in {}".format(time() - start_train_b))
+            print(" > END Training building {} in {}".format(b_num, time() - start_train_b))
+
+    def apply_correction(self, predictions, output_data, lower_limit, upper_limit):
+        """Find consuption of """
+
+
+
 
     def train_on_chunk(self, chunk, meter):
         """Signature is fine for site meter dataframes (unsupervised
@@ -123,28 +129,43 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
 
         return mains
 
+    def _clean_power_series_all_data_cache(self):
+        self.meter_series = {}
+
+    def get_power_series_from_meter(self, meter, clean_cache_before=True):
+        if clean_cache_before:
+            self._clean_power_series_all_data_cache()
+        return self._get_power_series_all_data(meter)
+
     def _get_power_series_all_data(self, meter):
         """Given a meter, load the serie or take it from the memory cache"""
 
-        b_series = self.meter_series.get(meter.building())
-        if b_series is not None:
-            serie = b_series.get(meter.instance())
-        else:
-            self.meter_series[meter.building()] = {}
-            serie = None
+        key = (
+            meter.key + "-" +
+            (
+                meter.store.window.start.isoformat()
+                if meter.store.window.start else "None"
+            ) +
+            (
+                meter.store.window.end.isoformat()
+                if meter.store.window.end else "None"
+            )
+        )
+
+        serie = self.meter_series.get(key)
 
         if serie is not None:
             return serie
         else:
-            self.meter_series[meter.building()][meter.instance()] = meter.power_series_all_data(
+            self.meter_series[key] = meter.power_series_all_data(
                 sample_period=self.sample_period,
-                resample_kwargs={'how': 'first'}  # The consumption at the instant
+                resample_kwargs={"how": "first"},  # The consumption at the instant
             )
-            return self.meter_series[meter.building()][meter.instance()]
+            return self.meter_series[key]
 
     def _calc_M_x(self, mains):
         # Load the data (serie of aggregated) to be disaggregated
-        mains_to_dissag = self._get_power_series_all_data(mains)
+        mains_to_dissag = self._get_power_series_all_data(mains.mains())
         # Lines 10-18 of algorithm
         M_x = self._calc_M(mains_to_dissag, self.tolerance)
 
@@ -166,10 +187,12 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
         """
         d = self.time_interval_neighbourhood
 
+        self._clean_power_series_all_data_cache()
+
         # Lines 1-9 of algorithm are part of the training phase
 
         # Load the data (serie of aggregated) to be disaggregated
-        mains_to_dissag = self._get_power_series_all_data(mains)
+        mains_to_dissag = self._get_power_series_all_data(mains.mains())
         amount_mains_to_dissag_records = mains_to_dissag.size
 
         # Lines 10-18 of algorithm
@@ -178,121 +201,145 @@ class PatternSimilaritiesDisaggregator(Disaggregator):
         # Indicates if metadaca must be saved
         data_is_available = False
 
-        # TODO: datos para construir datastore de salida, reubicar
-        # OJO! esto es asi pq no lo he generalizado a varios buildings
-        # timeframes = []
-        building_path = "/building{}".format(mains.building())
-        mains_data_location = building_path + "/elec/meter1"
-        cols = pd.MultiIndex.from_tuples([mains_to_dissag.name])
-
+        predictions_to_process = []
         train_mains = self._get_train_mains()
         # Lines 19 to end
-        # TODO: Porque comienza en d ??? la prediccion deberia ser en toda la serie!
-        for i in range(1 + d, amount_mains_to_dissag_records - d):
-            if i % 150 == 0:
-                print("Dissagregating for i={} ...".format(i), end="")
+        print(" Start dissagregating {} records...".format(
+            amount_mains_to_dissag_records
+        ))
+        start = time()
+        resolved_by_signature = 0  # Count how many records were resolved by signature
+        for i in range(amount_mains_to_dissag_records):
+            if i % 1000 == 0:
+                print("  Dissagregating for i={} ...".format(i), end="")
                 start = time()
                 stdout.flush()
-            I = set()
+            I = {}
             for main in train_mains:
                 b_num = main.building()
                 aggregated_meter = self._get_power_series_all_data(main)
-                aggregated_meter_amount = aggregated_meter.size
+                aggregated_meter_amount = aggregated_meter.index.size
 
-                I = []
                 if mains_to_dissag[i] > self.H:
-                    a = abs((aggregated_meter - mains_to_dissag[i])).reset_index()[d:aggregated_meter_amount-d]
-                    a = a[a.power.active <= self.neighbourhood].index.values
-                    I = [(b_num, x) for x in a]
+                    a = pd.DataFrame(
+                        data={
+                            'val': abs((aggregated_meter - mains_to_dissag[i])),
+                            'idx': range(aggregated_meter_amount)
+                        }
+                    ).iloc[d: aggregated_meter_amount - d][
+                        lambda x: x.val <= self.neighbourhood
+                    ].loc[:, "idx"]
+                    if a.size:
+                        I[b_num] = a.values
 
             # Lines 26 to 34
             # I is a set with tuples (building number <int>, position of record <int>)
             if I:
-                diff_similarities = [
-                    (j_b, j_i, abs(self.M_z[j_b][j_i] - M_x[i]))
-                    for j_b, j_i in I
-                ]
+                resolved_by_signature += 1
+                diff_similarities = pd.np.empty((0, 3))
+                for b, vals in I.items():
+                    vals = pd.DataFrame(
+                        data={
+                            'idxs': vals,
+                            'b': b,
+                            'vals': abs(self.M_z[b][vals] - M_x[i])
+                        }
+                    )
+                    diff_similarities = pd.np.vstack(
+                        (diff_similarities, vals.loc[:, ['b', 'idxs', 'vals']])
+                    )
             else:
-                diff_similarities = pd.np.empty((0,3))
+                diff_similarities = pd.np.empty((0, 3))
                 for main in self._get_train_mains():
                     main_serie = self._get_power_series_all_data(main)
                     b_num = main.building()
 
-                    diff_vec = abs(
-                        main_serie - mains_to_dissag[i]
-                    ).reset_index().reset_index()
-                    diff_vec['b'] = b_num
+                    diff_vec = pd.DataFrame(
+                        data={
+                            'val': abs(main_serie - mains_to_dissag[i]),
+                            'i': range(main_serie.index.size),
+                            'b': b_num
+                        }
+                    )
                     diff_similarities = pd.np.vstack(
-                        (diff_similarities, diff_vec.iloc[:, [-1, 0, -2]])
+                        (diff_similarities, diff_vec.loc[:, ['b', 'i', 'val']].values)
                     )
 
             del I
-            min_diff = min(diff_similarities, key=lambda x: x[2])[2]
-            J = [(b, i) for b, i, val in diff_similarities if val == min_diff]
+
+            J = diff_similarities[
+                # Filter by all the elements with minimum value
+                diff_similarities[:, 2]  # col num. 2 is the valuea
+                == pd.np.min(diff_similarities[:, 2])
+            ][:, [0, 1]]  # Keep only building and index
+
             del diff_similarities
             # This two values are the index of the training record that is similar to
             # the current moment of dissagregation. Prediction consist in taking the
             # values of the appliances at this moment as the prediction.
-            build_pred, positin_pred = random.choice(J)
-            positin_pred = int(positin_pred)
+            build_pred, position_pred = random.choice(J)
+            position_pred = int(position_pred)
             # print("Position pred {}".format(positin_pred))
             del J
 
-            main = None
-            for main in self._get_train_mains():
-                if main.building() == build_pred:
-                    break
-            # aggregated_of_pred = self._get_power_series_all_data(
-            #     main
-            # )[positin_pred]
-            datetime_pred = self._get_power_series_all_data(
-                main
-            ).index[positin_pred]
+            predictions_to_process.append(position_pred)
 
-            # Datetime of the moment most similar to the one we are desegregating
-            # datetime_pred = aggregated_of_pred.index
-
-            for meter in (
-                m for m in self.metergroup.all_meters()
-                if m.building() == build_pred
-                and not m.is_site_meter()
-            ):
-                data_is_available = True
-                meter_instance = meter.instance()
-                predicted_power = self._get_power_series_all_data(
-                    meter
-                )[datetime_pred:datetime_pred]
-                output_df = pd.DataFrame(
-                    data=predicted_power.values,
-                    index=mains_to_dissag.index[i:i+1]  # Replace train index by data to dessagregate
-                )
-                output_df.columns = pd.MultiIndex.from_tuples([mains_to_dissag.name])
-                # output_df.index = mains_to_dissag.index[i:i+1]  # Replace train index by data to dessagregate
-                key = "{}/elec/meter{}".format(building_path, meter_instance)
-                output_datastore.append(key, output_df)
-
-            if i % 100 == 0:
-                print("{}...".format(i), end="")
-                stdout.flush()
-            if i % 150 == 0:
+            if i % 1000 == 0:
                 print("END in {}".format(time() - start))
                 stdout.flush()
 
-        print("END TESTING")
-        stdout.flush()
-        # Copy mains data to disag output
-        output_datastore.append(
-            key=mains_data_location, value=pd.DataFrame(mains_to_dissag, columns=cols)
-        )
-        if data_is_available:
-            self._save_metadata_for_disaggregation(
-                output_datastore=output_datastore,
-                sample_period=self.sample_period,
-                measurement=mains_to_dissag.name,
-                timeframes=[mains.get_timeframe()],
-                building=mains.building(),
-                meters=self.metergroup.all_meters()
+        print("Dissagregations resolved by signature feature: {}".format(
+            resolved_by_signature
+        ))
+        """BUILD the predictions data"""
+
+        print(" Creating the dataset with predictions...")
+
+        # OJO! esto es asi pq no lo he generalizado a varios buildings
+        self.write_main_to_output(mains.mains(), output_datastore)
+
+        for meter in (
+            m for m in self.metergroup.all_meters()
+            if not m.is_site_meter()
+        ):
+            print("  Prediction for meter {}...".format(meter.instance()))
+            stdout.flush()
+            predicted_power = self._get_power_series_all_data(meter)[
+                predictions_to_process
+            ]
+            output_df = pd.DataFrame(
+                data=predicted_power.values, index=mains_to_dissag.index
             )
+            output_df.columns = pd.MultiIndex.from_tuples([mains_to_dissag.name])
+            b_num = meter.building()
+            m_num = meter.instance()
+            self.write_meterdf_to_output(output_df, output_datastore, b_num, m_num)
+
+    def _get_building_path_key(self, b, m):
+        return "/building{}/elec/meter{}".format(b, m)
+
+    def write_meterdf_to_output(self, output_df, output_datastore, b_num, m_num):
+        key = self._get_building_path_key(b_num, m_num)
+        output_datastore.append(key, output_df)
+
+    def write_main_to_output(self, main, output_datastore):
+        mains_data_location = self._get_building_path_key(
+            main.building(), 1  # TODO: main.instance() return a tuple!
+        )
+        main_serie = self._get_power_series_all_data(main)
+        cols = pd.MultiIndex.from_tuples([main_serie.name])
+
+        output_datastore.append(
+            key=mains_data_location, value=pd.DataFrame(main_serie, columns=cols)
+        )
+        self._save_metadata_for_disaggregation(
+            output_datastore=output_datastore,
+            sample_period=self.sample_period,
+            measurement=main_serie.name,
+            timeframes=[main.get_timeframe()],
+            building=main.building(),
+            meters=self.metergroup.all_meters(),
+        )
 
     def disaggregate_chunk(self, mains):
         """In-memory disaggregation.
@@ -520,7 +567,6 @@ if __name__ == "__main__":
     print("Start test.")
 
     from nilmtk import HDFDataStore, ElecMeter
-
 
     class ElecStub(object):
         """
