@@ -137,6 +137,7 @@ def create_normalized_consumption(elecs, stats):
     new_data = pd.DataFrame(data=new_appliance_data).fillna(value=0.0)
     new_data = pd.concat([new_data], axis=1, keys=["power"])
     new_data.index.name = "datetime"
+    new_data.tz_convert('UTC')
 
     return new_data
 
@@ -183,7 +184,8 @@ def create_metadata_files(base_dir, data):
         "schema": "https://github.com/nilmtk/nilm_metadata/tree/v0.2",
         "geo_location": data.metadata.get("geo_location"),
         "date": data.metadata.get("date"),
-        "timezone": data.metadata.get("timezone"),
+        # "timezone": data.metadata.get("timezone"),
+        "timezone": 'UTC'  # Data was normalized to UTC in create_normalized_consumption method
     }
     with open(join(base_dir, "metadata", "dataset.yaml"), "w") as f:
         yaml.dump(dataset_metadata, f, default_flow_style=False)
@@ -254,8 +256,10 @@ def create_data_files(norm_cons, building, dest_format="HDF"):
 
 INPUT_DATASET_FILE = "/Users/jp/Documents/FIng/PruebasNILM/ukdale.h5"
 BUILDINGS = [1]
-BASE_DIR = "/Users/jp/Documents/FIng/PruebasNILM/synthetic_dataset_1YEAR_UKDALE_house1"
+BASE_DIR = "/Users/jp/Documents/FIng/PruebasNILM/synthetic_dataset_1YEAR_UKDALE_house1_UTC_articulo"
 ELEC_NAMES = ["fridge", "washer dryer", "kettle", "dish washer", "HTPC"]
+START_RANGE = "2013-01-01 00:00:00"
+END_RANGE = "2013-12-31 23:59:59"
 
 MIN_CONSUMPTION = 5.0
 
@@ -264,7 +268,7 @@ if __name__ == "__main__":
     data = DataSet(INPUT_DATASET_FILE)
     data.clear_cache()
     # Set datetime range
-    data.set_window(start="2013-04-07 00:00:00", end="2014-04-08 23:59:59")
+    data.set_window(start=START_RANGE, end=END_RANGE)
 
     for b in BUILDINGS:
         print("Start processing building {}...".format(b))

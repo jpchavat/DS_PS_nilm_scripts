@@ -21,6 +21,7 @@ from nilmtk.datastore import Key
 from nilmtk.measurement import LEVEL_NAMES
 from nilmtk.utils import get_datastore, get_module_directory, check_directory_exists
 from nilm_metadata import save_yaml_to_datastore
+from nilm_metadata.convert_yaml_to_hdf5 import _load_file
 
 
 def convert_data(input_path: str, output_dir: str = "./") -> None:
@@ -36,11 +37,17 @@ def convert_data(input_path: str, output_dir: str = "./") -> None:
     # Open DataStore
     store = get_datastore(output_dir, "HDF", mode="w")
 
+    yaml_dir = join(get_module_directory(), input_path, "metadata")
+    metadata = _load_file(yaml_dir, 'dataset.yaml')
+
+    # Load timezone, if exists, if not, use UTC
+    tz = metadata.get('timezone', 'UTC')
+    print("Timezone to be used: {}".format(tz))
+
     # Convert raw data to DataStore
-    _convert(input_path, store)
+    _convert(input_path, store, tz)
 
     # Add metadata
-    yaml_dir = join(get_module_directory(), input_path, "metadata")
     save_yaml_to_datastore(yaml_dir=yaml_dir, store=store)
 
     store.close()
@@ -48,7 +55,7 @@ def convert_data(input_path: str, output_dir: str = "./") -> None:
     print("Done converting SYNTHEDIC DATA IN CSV to HDF5!")
 
 
-def _convert(input_path: str, store: DataStore) -> None:
+def _convert(input_path: str, store: DataStore, tz: str) -> None:
     """
     Parameters
     ----------
@@ -56,6 +63,8 @@ def _convert(input_path: str, store: DataStore) -> None:
         The root path of the REFIT dataset.
     store : DataStore
         The NILMTK DataStore object.
+    tz : str
+        String with timezone to use in index parser
     """
 
     check_directory_exists(input_path)
@@ -85,7 +94,12 @@ def _convert(input_path: str, store: DataStore) -> None:
                 index_col="datetime",
                 parse_dates=[0],
             )
-            chan_df.index = chan_df.index.tz_localize('UTC')
+            # chan_df.index = chan_df.index.tz_localize('UTC')
+            chan_df.index = chan_df.index.tz_localize(
+                tz=tz,
+                # infer_dst=True,
+                # ambiguous='infer'
+            )
             chan_df = chan_df.sort_index()
             chan_df.columns = pd.MultiIndex.from_tuples([("power", "active")])
 
