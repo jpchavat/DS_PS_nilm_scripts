@@ -7,8 +7,8 @@ from warnings import warn
 import scipy.spatial as ss
 from scipy import fft
 from pandas.plotting import lag_plot, autocorrelation_plot
-from scipy.special import digamma,gamma
-from math import log,pi
+from scipy.special import digamma, gamma
+from math import log, pi
 import numpy.random as nr
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,9 +28,11 @@ from nilmtk.appliance import DEFAULT_ON_POWER_THRESHOLD
 
 MAX_SIZE_ENTROPY = 10000
 
+
 class Electric(object):
     """Common implementations of methods shared by ElecMeter and MeterGroup.
     """
+
     def when_on(self, on_power_threshold=None, **load_kwargs):
         """Are the connected appliances appliance is on (True) or off (False)?
 
@@ -234,7 +236,8 @@ class Electric(object):
         good_sections = self.good_sections(**load_kwargs)
         return good_sections.uptime()
 
-    def average_energy_per_period(self, offset_alias='D', use_uptime=True, **load_kwargs):
+    def average_energy_per_period(self, offset_alias='D', use_uptime=True,
+                                  **load_kwargs):
         """Calculate the average energy per period.  e.g. the average 
         energy per day.
 
@@ -265,11 +268,11 @@ class Electric(object):
         periods = uptime_secs / offset_alias_to_seconds(offset_alias)
         energy = self.total_energy(**load_kwargs)
         return energy / periods
-        
+
     def proportion_of_energy(self, other, **loader_kwargs):
         """Compute the proportion of energy of self compared to `other`.
 
-        By default, only uses other.good_sections().  You may want to set 
+        By default, only uses other.good_sections().  You may want to set
         `sections=self.good_sections().intersection(other.good_sections())`
 
         Parameters
@@ -298,7 +301,7 @@ class Electric(object):
         shared_ac_types = set(other_ac_types).intersection(self_ac_types)
         n_shared_ac_types = len(shared_ac_types)
         if n_shared_ac_types > 1:
-            return (total_energy[shared_ac_types] / 
+            return (total_energy[shared_ac_types] /
                     other_total_energy[shared_ac_types]).mean()
         elif n_shared_ac_types == 0:
             ac_type = select_best_ac_type(self_ac_types)
@@ -312,9 +315,9 @@ class Electric(object):
 
     def correlation(self, other, **load_kwargs):
         """
-        Finds the correlation between the two ElecMeters. Both the ElecMeters 
+        Finds the correlation between the two ElecMeters. Both the ElecMeters
         should be perfectly aligned
-        Adapted from: 
+        Adapted from:
         http://www.johndcook.com/blog/2008/11/05/how-to-calculate-pearson-correlation-accurately/
 
         Parameters
@@ -345,7 +348,7 @@ class Electric(object):
             return np.NaN
 
         # we're using Python 3's division (which returns a float)
-        x_bar = x_sum / x_n 
+        x_bar = x_sum / x_n
         y_bar = y_sum / y_n
 
         # Second pass is used to find x_s and y_s (std.devs)
@@ -360,8 +363,8 @@ class Electric(object):
         y_s = stdev(other, y_bar, y_n)
 
         numerator = 0.0
-        for (x_power, y_power) in zip(self.power_series(**load_kwargs), 
-                                       other.power_series(**load_kwargs)):
+        for (x_power, y_power) in zip(self.power_series(**load_kwargs),
+                                      other.power_series(**load_kwargs)):
             xi_minus_xbar = x_power - x_bar
             del x_power
             gc.collect()
@@ -402,35 +405,35 @@ class Electric(object):
         Returns
         -------
         matplotlib.axis
-        """ 
+        """
         if ax is None:
             ax = plt.gca()
-        Fs = 1.0/self.sample_period()
+        Fs = 1.0 / self.sample_period()
         for power in self.power_series():
-            n = len(power.values) # length of the signal
+            n = len(power.values)  # length of the signal
             k = np.arange(n)
-            T = n/Fs
-            frq = k/T # two sides frequency range
-            frq = frq[range(n//2)] # one side frequency range
+            T = n / Fs
+            frq = k / T  # two sides frequency range
+            frq = frq[range(n // 2)]  # one side frequency range
 
-            Y = fft(power)/n # fft computing and normalization
-            Y = Y[range(n//2)]
+            Y = fft(power) / n  # fft computing and normalization
+            Y = Y[range(n // 2)]
 
-            ax.plot(frq,abs(Y)) # plotting the spectrum
+            ax.plot(frq, abs(Y))  # plotting the spectrum
 
         ax.set_xlabel('Freq (Hz)')
         ax.set_ylabel('|Y(freq)|')
         return ax
-          
+
     def plot_autocorrelation(self, ax=None):
         """
-        Plots autocorrelation of power data 
-        Reference: 
+        Plots autocorrelation of power data
+        Reference:
         http://www.itl.nist.gov/div898/handbook/eda/section3/autocopl.htm
 
         Returns
         -------
-        matplotlib.axis 
+        matplotlib.axis
         """
         if ax is None:
             ax = plt.gca()
@@ -438,7 +441,7 @@ class Electric(object):
             autocorrelation_plot(power, ax=ax)
         return ax
 
-    def plot_power_histogram(self, ax=None, load_kwargs=None, 
+    def plot_power_histogram(self, ax=None, load_kwargs=None,
                              plot_kwargs=None, range=None, **hist_kwargs):
         """
         Parameters
@@ -467,14 +470,14 @@ class Electric(object):
             maximum = None if range is None else range[1]
             range = (self.on_power_threshold(), maximum)
 
-        hist, bins = histogram_from_generator(generator, range=range, 
+        hist, bins = histogram_from_generator(generator, range=range,
                                               **hist_kwargs)
 
         # Plot
         plot_kwargs.setdefault('linewidth', 0.1)
         ax.fill_between(bins[:-1], 0, hist, **plot_kwargs)
         first_bin_width = bins[1] - bins[0]
-        ax.set_xlim([bins[0]-(first_bin_width/2), bins[-1]])
+        ax.set_xlim([bins[0] - (first_bin_width / 2), bins[-1]])
         ax.set_xlabel('Power (watts)')
         ax.set_ylabel('Count')
         return ax
@@ -485,7 +488,7 @@ class Electric(object):
 
         Parameters
         ----------
-        threshold: int, threshold in Watts between succcessive readings 
+        threshold: int, threshold in Watts between succcessive readings
         to amount for an appliance state change
         """
 
@@ -493,50 +496,52 @@ class Electric(object):
         for power in self.power_series():
             delta_power = power.diff()
             delta_power_absolute = delta_power.abs()
-            datetime_switches.append(delta_power_absolute[(delta_power_absolute>threshold)].index.values.tolist())
+            datetime_switches.append(delta_power_absolute[(
+                    delta_power_absolute > threshold)].index.values.tolist())
         return flatten_2d_list(datetime_switches)
 
     def entropy(self, k=3, base=2):
-        """ 
+        """
         This implementation is provided courtesy NPEET toolbox,
         the authors kindly allowed us to directly use their code.
-        As a courtesy procedure, you may wish to cite their paper, 
+        As a courtesy procedure, you may wish to cite their paper,
         in case you use this function.
         This fails if there is a large number of records. Need to
-        ask the authors what to do about the same! 
+        ask the authors what to do about the same!
         The classic K-L k-nearest neighbor continuous entropy estimator
         x should be a list of vectors, e.g. x = [[1.3],[3.7],[5.1],[2.4]]
         if x is a one-dimensional scalar and we have four samples
         """
+
         def kdtree_entropy(z):
-            assert k <= len(z)-1, "Set k smaller than num. samples - 1"
+            assert k <= len(z) - 1, "Set k smaller than num. samples - 1"
             d = len(z[0])
             N = len(z)
-            #small noise to break degeneracy, see doc.
+            # small noise to break degeneracy, see doc.
             intens = 1e-10
-            z = [list(p + intens*nr.rand(len(z[0]))) for p in z]
+            z = [list(p + intens * nr.rand(len(z[0]))) for p in z]
             tree = ss.cKDTree(z)
-            nn = [tree.query(point, k+1, p=float('inf'))[0][k] for point in z]
-            const = digamma(N)-digamma(k) + d*log(2)
-            return (const + d*np.mean(map(log, nn)))/log(base)
+            nn = [tree.query(point, k + 1, p=float('inf'))[0][k] for point in z]
+            const = digamma(N) - digamma(k) + d * log(2)
+            return (const + d * np.mean(map(log, nn))) / log(base)
 
         out = []
         for power in self.power_series():
             x = power.values
             num_elements = len(x)
-            x = x.reshape((num_elements, 1))            
+            x = x.reshape((num_elements, 1))
             if num_elements > MAX_SIZE_ENTROPY:
 
-                splits = num_elements/MAX_SIZE_ENTROPY + 1
+                splits = num_elements / MAX_SIZE_ENTROPY + 1
                 y = np.array_split(x, splits)
-                for z in y:            
-                    out.append(kdtree_entropy(z))                    
+                for z in y:
+                    out.append(kdtree_entropy(z))
             else:
                 out.append(kdtree_entropy(x))
-        return sum(out)/len(out)
+        return sum(out) / len(out)
 
     def mutual_information(self, other, k=3, base=2):
-        """ 
+        """
         Mutual information of two ElecMeters
         x,y should be a list of vectors, e.g. x = [[1.3],[3.7],[5.1],[2.4]]
         if x is a one-dimensional scalar and we have four samples
@@ -545,52 +550,55 @@ class Electric(object):
         ----------
         other : ElecMeter or MeterGroup
         """
+
         def kdtree_mi(x, y, k, base):
-            intens = 1e-10 #small noise to break degeneracy, see doc.
-            x = [list(p + intens*nr.rand(len(x[0]))) for p in x]
-            y = [list(p + intens*nr.rand(len(y[0]))) for p in y]
-            points = zip2(x,y)
+            intens = 1e-10  # small noise to break degeneracy, see doc.
+            x = [list(p + intens * nr.rand(len(x[0]))) for p in x]
+            y = [list(p + intens * nr.rand(len(y[0]))) for p in y]
+            points = zip2(x, y)
             # Find nearest neighbors in joint space, p=inf means max-norm
             tree = ss.cKDTree(points)
-            dvec = [tree.query(point, k+1, p=float('inf'))[0][k] for point in points]
-            a, b, c, d = avgdigamma(x, dvec), avgdigamma(y, dvec), digamma(k), digamma(len(x))
-            return (-a-b+c+d)/log(base)
-            
+            dvec = [tree.query(point, k + 1, p=float('inf'))[0][k] for point in points]
+            a, b, c, d = avgdigamma(x, dvec), avgdigamma(y, dvec), digamma(k), digamma(
+                len(x))
+            return (-a - b + c + d) / log(base)
+
         def zip2(*args):
             # zip2(x,y) takes the lists of vectors and makes it a list of vectors in a joint space
             # E.g. zip2([[1],[2],[3]],[[4],[5],[6]]) = [[1,4],[2,5],[3,6]]
             return [sum(sublist, []) for sublist in zip(*args)]
 
         def avgdigamma(points, dvec):
-            #This part finds number of neighbors in some radius in the marginal space
-            #returns expectation value of <psi(nx)>
+            # This part finds number of neighbors in some radius in the marginal space
+            # returns expectation value of <psi(nx)>
             N = len(points)
             tree = ss.cKDTree(points)
             avg = 0.
             for i in range(N):
                 dist = dvec[i]
-                #subtlety, we don't include the boundary point, 
-                #but we are implicitly adding 1 to kraskov def bc center point is included
-                num_points = len(tree.query_ball_point(points[i],dist-1e-15,p=float('inf'))) 
-                avg += digamma(num_points)/N
+                # subtlety, we don't include the boundary point,
+                # but we are implicitly adding 1 to kraskov def bc center point is included
+                num_points = len(
+                    tree.query_ball_point(points[i], dist - 1e-15, p=float('inf')))
+                avg += digamma(num_points) / N
             return avg
 
         out = []
         for power_x, power_y in zip(self.power_series(), other.power_series()):
             power_x_val = power_x.values
-            power_y_val = power_y.values 
+            power_y_val = power_y.values
             num_elements = len(power_x_val)
             power_x_val = power_x_val.reshape((num_elements, 1))
-            power_y_val = power_y_val.reshape((num_elements, 1))            
+            power_y_val = power_y_val.reshape((num_elements, 1))
             if num_elements > MAX_SIZE_ENTROPY:
-                splits = num_elements/MAX_SIZE_ENTROPY + 1
+                splits = num_elements / MAX_SIZE_ENTROPY + 1
                 x_split = np.array_split(power_x_val, splits)
                 y_split = np.array_split(power_y_val, splits)
-                for x, y  in zip(x_split, y_split):
+                for x, y in zip(x_split, y_split):
                     out.append(kdtree_mi(x, y, k, base))
             else:
                 out.append(kdtree_mi(power_x_val, power_y_val, k, base))
-        return sum(out)/len(out)
+        return sum(out) / len(out)
 
     def available_power_ac_types(self):
         """Finds available alternating current types from power measurements.
@@ -672,7 +680,7 @@ class Electric(object):
         hist : np.ndarray
             length will be `period / bin_duration`
         """
-        n_bins = (offset_alias_to_seconds(period) / 
+        n_bins = (offset_alias_to_seconds(period) /
                   offset_alias_to_seconds(bin_duration))
         if n_bins != int(n_bins):
             raise ValueError('`bin_duration` must exactly divide the'
@@ -712,7 +720,7 @@ class Electric(object):
 
     def plot_activity_histogram(self, ax=None, period='D', bin_duration='H',
                                 plot_kwargs=None, **kwargs):
-        
+
         # Some common labels
         freq_labels = {
             'H': 'hour',
@@ -736,13 +744,12 @@ class Electric(object):
         ax.set_xlim([-0.5, n_bins])
         ax.set_title('Activity distribution')
         ax.set_xlabel(
-            freq_labels.get(bin_duration, bin_duration).title() + 
-            ' of ' + 
+            freq_labels.get(bin_duration, bin_duration).title() +
+            ' of ' +
             freq_labels.get(period, period)
         )
         ax.set_ylabel('Count')
         return ax
-
 
     def activation_series(self, *args, **kwargs):
         """Returns runs of an appliance.
@@ -855,15 +862,17 @@ def align_two_meters(master, slave, func='power_series', resample_kwargs={}):
         # TODO: do this resampling in the pipeline?
         if not slave_chunk.empty:
             if resample_kwargs:
-                slave_chunk = slave_chunk.resample(period_alias, **resample_kwargs)#.mean()
+                slave_chunk = slave_chunk.resample(period_alias,
+                                                   **resample_kwargs)  # .mean()
             else:
                 slave_chunk = slave_chunk.resample(period_alias).mean()
-            
+
         if slave_chunk.empty:
             continue
 
         if resample_kwargs:
-            master_chunk = master_chunk.resample(period_alias, **resample_kwargs)#.mean()
+            master_chunk = master_chunk.resample(period_alias,
+                                                 **resample_kwargs)  # .mean()
         else:
             master_chunk = master_chunk.resample(period_alias).mean()
 
@@ -968,9 +977,9 @@ def get_activations(chunk, min_off_duration=0, min_on_duration=0,
         # Now remove off_events and on_events
         switch_off_events = switch_off_events[
             np.concatenate([above_threshold_off_durations,
-                            [len(switch_off_events)-1]])]
+                            [len(switch_off_events) - 1]])]
         switch_on_events = switch_on_events[
-            np.concatenate([[0], above_threshold_off_durations+1])]
+            np.concatenate([[0], above_threshold_off_durations + 1])]
     assert len(switch_on_events) == len(switch_off_events)
 
     activations = []

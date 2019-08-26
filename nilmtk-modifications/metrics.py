@@ -66,24 +66,34 @@ def error_in_assigned_energy(predictions, ground_truth):
     both_sets_of_meters = iterate_through_submeters_of_two_metergroups(
         predictions, ground_truth)
     for pred_meter, ground_truth_meter in both_sets_of_meters:
-        sections = pred_meter.good_sections()
-        ground_truth_energy = ground_truth_meter.total_energy(sections=sections)
-        predicted_energy = pred_meter.total_energy(sections=sections)
-        errors[pred_meter.instance()] = np.abs(ground_truth_energy - predicted_energy)[0]
+        predicted_energy, ground_truth_energy = 0, 0
+        for aligned_meters_chunk in align_two_meters(
+            pred_meter, ground_truth_meter,
+            resample_kwargs={'how': 'first'}
+        ):
+            sum = aligned_meters_chunk.sum(axis=0)
+            predicted_energy += sum['master']
+            ground_truth_energy += sum['slave']
+
+        errors[pred_meter.instance()] = np.abs(ground_truth_energy - predicted_energy)
+        # sections = pred_meter.good_sections()
+        # ground_truth_energy = ground_truth_meter.total_energy(sections=sections)
+        # predicted_energy = pred_meter.total_energy(sections=sections)
+        # errors[pred_meter.instance()] = np.abs(ground_truth_energy - predicted_energy)[0]
     return pd.Series(errors)
 
 
 def fraction_energy_assigned_correctly(predictions, ground_truth):
     '''Compute fraction of energy assigned correctly
-    
+
     .. math::
-        fraction = 
-        \\sum_n min \\left ( 
-        \\frac{\\sum_n y}{\\sum_{n,t} y}, 
-        \\frac{\\sum_n \\hat{y}}{\\sum_{n,t} \\hat{y}} 
+        fraction =
+        \\sum_n min \\left (
+        \\frac{\\sum_n y}{\\sum_{n,t} y},
+        \\frac{\\sum_n \\hat{y}}{\\sum_{n,t} \\hat{y}}
         \\right )
 
-    Ignores distinction between different AC types, instead if there are 
+    Ignores distinction between different AC types, instead if there are
     multiple AC types for each meter then we just take the max value across
     the AC types.
 
@@ -117,9 +127,9 @@ def fraction_energy_assigned_correctly(predictions, ground_truth):
 
 def mean_normalized_error_power(predictions, ground_truth):
     '''Compute mean normalized error in assigned power
-        
+
     .. math::
-        error^{(n)} = 
+        error^{(n)} =
         \\frac
         { \\sum_t {\\left | y_t^{(n)} - \\hat{y}_t^{(n)} \\right |} }
         { \\sum_t y_t^{(n)} }
@@ -141,8 +151,10 @@ def mean_normalized_error_power(predictions, ground_truth):
     for pred_meter, ground_truth_meter in both_sets_of_meters:
         total_abs_diff = 0.0
         sum_of_ground_truth_power = 0.0
-        for aligned_meters_chunk in align_two_meters(pred_meter, 
-                                                     ground_truth_meter):
+        for aligned_meters_chunk in align_two_meters(
+            pred_meter, ground_truth_meter,
+            resample_kwargs={'how': 'first'}
+        ):
             diff = aligned_meters_chunk.iloc[:, 0] - aligned_meters_chunk.iloc[:, 1]
             total_abs_diff += sum(abs(diff.dropna()))
             sum_of_ground_truth_power += aligned_meters_chunk.iloc[:, 1].sum()
@@ -159,7 +171,7 @@ def mean_normalized_error_power(predictions, ground_truth):
 
 def rms_error_power(predictions, ground_truth):
     '''Compute RMS error in assigned power
-    
+
     .. math::
             error^{(n)} = \\sqrt{ \\frac{1}{T} \\sum_t{ \\left ( y_t - \\hat{y}_t \\right )^2 } }
 
@@ -181,8 +193,10 @@ def rms_error_power(predictions, ground_truth):
     for pred_meter, ground_truth_meter in both_sets_of_meters:
         sum_of_squared_diff = 0.0
         n_samples = 0
-        for aligned_meters_chunk in align_two_meters(pred_meter, 
-                                                     ground_truth_meter):
+        for aligned_meters_chunk in align_two_meters(
+            pred_meter, ground_truth_meter,
+            resample_kwargs={'how': 'first'}
+        ):
             diff = aligned_meters_chunk.iloc[:, 0] - aligned_meters_chunk.iloc[:, 1]
             diff.dropna(inplace=True)
             sum_of_squared_diff += (diff ** 2).sum()
@@ -256,7 +270,7 @@ def tp_fp_fn_tn(predictions, ground_truth):
     both_sets_of_meters = iterate_through_submeters_of_two_metergroups(
         predictions, ground_truth)
 
-    instances, tps, fps, fns, tns = [], [], [], [], []
+    instances, tps, fps, fns, tns, precisions, recalls = [], [], [], [], [], [], []
     for pred_meter, ground_truth_meter in both_sets_of_meters:
         aligned_meters = align_two_meters(
             pred_meter, ground_truth_meter, 'when_on',
@@ -290,14 +304,23 @@ def tp_fp_fn_tn(predictions, ground_truth):
         fps.append(fp_sum)
         fns.append(fn_sum)
         tns.append(tn_sum)
+        precisions.append(tp_sum / (tp_sum + fn_sum))
+        recalls.append(tp_sum / (tp_sum + fp_sum))
 
         # results_dict[pred_meter.instance()] = results.append(
         #     {'tp': tp_sum, 'fp': fp_sum, 'fn': fn_sum, 'tn': tn_sum},
         #     ignore_index=True,
         # )
     results = pd.DataFrame(
-        data={'tp': tps, 'fp': fps, 'fn': fns, 'tn': tns},
-        columns=['tp', 'fp', 'fn', 'tn'],
+        data={
+            'tp': tps,
+            'fp': fps,
+            'fn': fns,
+            'tn': tns,
+            'precision': precisions,
+            'recall': recalls
+        },
+        columns=['tp', 'fp', 'fn', 'tn', 'precision', 'recall'],
         index=instances
     )
     # res = pd.concat(results_dict.values())
