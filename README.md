@@ -1,4 +1,4 @@
-## Detection of similarities on consumption patterns, a NILM approach
+## Detection of similarities in consumption patterns, a NILM approach
 
 This set of scripts are part of research in NILM methods based on the detection of similarities on consumption patterns.
 
