@@ -1,6 +1,9 @@
 from datetime import datetime
 from time import time
 
+import warnings
+warnings.filterwarnings("ignore")
+
 import dateutil
 import pandas as pd
 
@@ -63,20 +66,25 @@ def calc_metrics(predictions_fname, gt_data):
 if __name__ == "__main__":
     """ LOAD DATA"""
     start_exp = time()
-    # data_filename = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_articulo_2019-08-23T002055482660.h5"
-    data_filename = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_2019-08-25T190826647710.h5"
-    prediction_filename_co = './predictions/PRED_CO_.h5'.format(
+    # data_filename = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_2019-08-25T190826647710.h5"
+    # data_filename = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_CONSTVALUES_2019-08-26T004307788622.h5"
+    # data_filename = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_CONSTVALUES_2_2019-08-26T120856188525.h5"
+    # data_train_fname = "./datasets_h5/SYNT_1Y_UKDALE_H1_UTC_CONSTVAL_250_2000_2500_2500_80_2019-08-26T004307788622.h5"
+    data_train_fname = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_NOISE-3.h5"
+    # data_test_fname = "./datasets_h5/SYNT_1Y_UKDALE_H1_UTC_CONSTVAL_260_2000_2400_2600_70_2019-08-26T164245394143.h5"
+    data_test_fname = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_NOISE-3.h5"
+    prediction_filename_co = './predictions/PRED_CO_{}_{}.h5'.format(
         datetime.now().isoformat().replace(":", "").replace(".", "").replace("-", "_"),
-        data_filename.replace(".", "").replace("/", "").replace("-", "_")
+        data_train_fname.replace(".", "").replace("/", "").replace("-", "_")
     )
-    prediction_filename_fhmm = './predictions/PRED_FHMM_.h5'.format(
+    prediction_filename_fhmm = './predictions/PRED_FHMM_{}_{}.h5'.format(
         datetime.now().isoformat().replace(":", "").replace(".", "").replace("-", "_"),
-        data_filename.replace(".", "").replace("/", "").replace("-", "_")
+        data_train_fname.replace(".", "").replace("/", "").replace("-", "_")
     )
 
-    data_train = DataSet(data_filename, format="HDF")
+    data_train = DataSet(data_train_fname, format="HDF")
     data_train.clear_cache()
-    data_test = DataSet(data_filename, format="HDF")
+    data_test = DataSet(data_test_fname, format="HDF")
     data_test.clear_cache()
 
     TRAIN_START = dateutil.parser.parse("2013-01-01 00:00:00")
@@ -89,7 +97,11 @@ if __name__ == "__main__":
     data_train.set_window(start=TRAIN_START, end=TRAIN_END)
     data_test.set_window(start=TEST_START, end=TEST_END)
 
+    # SAMPLE_PERIOD = 60
     SAMPLE_PERIOD = 300  # 5min
+    # SAMPLE_PERIOD = 600  # 10min
+    # SAMPLE_PERIOD = 900  # 15min
+    # SAMPLE_PERIOD = 1200  # 20min
     b = 1
 
     print(
@@ -97,13 +109,16 @@ if __name__ == "__main__":
         "\n"
         "EXPERIMENT CO-FHMM {}\n".format(datetime.now().isoformat()) +
         "\n"
-        " Dataset filename: {}\n".format(data_filename) +
+        " Dataset train filename: {}\n".format(data_train_fname) +
+        " Dataset test filename: {}\n".format(data_test_fname) +
         " Predictions CO filename: {}\n".format(prediction_filename_co) +
         " Predictions FHMM filename: {}\n".format(prediction_filename_fhmm) +
         "\n"
         " Train datetime range from {} to {}\n".format(TRAIN_START, TRAIN_END) +
         " Test datetime range from {} to {}\n".format(TEST_START, TEST_END) +
         "\n"
+        "Parameters:\n"
+        " Sample period: {}\n".format(SAMPLE_PERIOD)
     )
 
     predictions = {
@@ -117,6 +132,18 @@ if __name__ == "__main__":
         },
     }
 
+    ELEC_TYPES = ["fridge", "washer dryer", "kettle", "dish washer", "HTPC"]
+    TRAIN_ELECTS = data_train.buildings[b].elec.from_list(
+        [m.identifier for m in data_train.buildings[b].elec.select_using_appliances(
+            type=ELEC_TYPES
+        ).meters] + [data_train.buildings[b].elec.mains().identifier]
+    )
+    TEST_ELECTS = data_test.buildings[b].elec.from_list(
+        [m.identifier for m in data_test.buildings[b].elec.select_using_appliances(
+            type=ELEC_TYPES
+        ).meters] + [data_test.buildings[b].elec.mains().identifier]
+    )
+
     for p, info in predictions.items():
         alg = info['alg']
         pred_filename = info['file']
@@ -125,20 +152,30 @@ if __name__ == "__main__":
         print("> TRAINING {}".format(p))
         data_train.set_window(start=TRAIN_START, end=TRAIN_END)
         alg_clf = alg()
-        alg_clf.train(data_train.buildings[b].elec, sample_period=SAMPLE_PERIOD)
+        alg_clf.train(TRAIN_ELECTS, sample_period=SAMPLE_PERIOD)
 
         # TEST
         print("> TESTING {}".format(p))
         prediction_alg = HDFDataStore(pred_filename, mode='w')
         data_test.set_window(start=TEST_START, end=TEST_END)
-        alg_clf.disaggregate(data_test.buildings[b].elec, prediction_alg,
-                             sample_period=SAMPLE_PERIOD)
+        alg_clf.disaggregate(
+            # data_test.buildings[b].elec,
+            TEST_ELECTS,
+            prediction_alg,
+            sample_period=SAMPLE_PERIOD)
         prediction_alg.close()
         del prediction_alg
 
         # METRICS
-        metric_results = calc_metrics(pred_filename, data_test.buildings[b].elec)
+        metric_results = calc_metrics(pred_filename, gt_data=TEST_ELECTS)
+        METRIC_COLS = ["Fridge", "Washer dryer", "Kettle", "Dish washer", "HTPC"]
+        metric_results = metric_results.T.iloc[[0, 2, 7, 8, 1], :].loc[:, METRIC_COLS]
+        metric_results.index = ["TEE (kW)", "NEAP", "precision", "recall", "F-score"]
+        metric_results = metric_results.round(4)
+        metric_results.iloc[0, :] = (metric_results.iloc[0, :] / 1000).round(2)
         print(metric_results.to_string())
+        print("CSV FORMAT...")
+        metric_results.to_csv(sys.stdout, sep="&", line_terminator="\\\\\n")
 
     print(
         "> END experiment in {} seconds.\n"

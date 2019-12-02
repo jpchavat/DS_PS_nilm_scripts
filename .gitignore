@@ -2,3 +2,7 @@
 **/*.h5
 **/.idea/
 **/.ipynb_checkpoints/
+**/datasets_csv_metadata
+**/datasets_h5
+**/predictions
+**/dissagregator_versions_bkp

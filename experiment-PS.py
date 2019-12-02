@@ -1,6 +1,9 @@
 from datetime import datetime
 from time import time
 
+import warnings
+warnings.filterwarnings("ignore")
+
 import dateutil
 import sys
 import pandas as pd
@@ -151,22 +154,28 @@ def calc_metrics(predictions_fname, gt_data):
 if __name__ == "__main__":
     """ LOAD DATA"""
     start_exp = time()
-    # data_filename = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_articulo_2019-08-23T002055482660.h5"
-    data_filename = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_2019-08-25T190826647710.h5"
+    # data_filename = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_2019-08-25T190826647710.h5"
+    # data_filename = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_CONSTVALUES_2019-08-26T004307788622.h5"
+    # data_train_fname = "./datasets_h5/SYNT_1Y_UKDALE_H1_UTC_CONSTVAL_250_2000_2500_2500_80_2019-08-26T004307788622.h5"
+    data_train_fname = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_NOISE-3.h5"
+    # data_test_fname = "./datasets_h5/SYNT_1Y_UKDALE_H1_UTC_CONSTVAL_260_2000_2400_2600_70_2019-08-26T164245394143.h5"
+    data_test_fname = "./datasets_h5/synthetic_1YEAR_UKDALE_house1_UTC_articulo_NOISE-3.h5"
     prediction_filename = "./predictions/PRED_{}_{}.h5".format(
         datetime.now().isoformat().replace(":", "").replace(".", "").replace("-", "_"),
-        data_filename.replace(".", "").replace("/", "").replace("-", "_"),
+        data_test_fname.replace(".", "").replace("/", "").replace("-", "_"),
     )
 
-    data_train = DataSet(data_filename, format="HDF")
+    data_train = DataSet(data_train_fname, format="HDF")
     data_train.clear_cache()
-    data_test = DataSet(data_filename, format="HDF")
+    data_test = DataSet(data_test_fname, format="HDF")
     data_test.clear_cache()
 
     TRAIN_START = dateutil.parser.parse("2013-01-01 00:00:00")
     # TRAIN_END = dateutil.parser.parse("2013-01-01 12:00:00")
     TRAIN_END = dateutil.parser.parse("2013-07-01 00:00:00")
     TEST_START = TRAIN_END
+    # TEST_START = dateutil.parser.parse("2013-01-01 00:00:00")
+    # TEST_END = dateutil.parser.parse("2013-01-10 00:00:00")
     TEST_END = dateutil.parser.parse("2013-12-31 23:59:59")
     # TEST_END = dateutil.parser.parse("2013-01-30 00:00:00")
 
@@ -177,6 +186,8 @@ if __name__ == "__main__":
     SAMPLE_PERIOD = 300  # 5min
     # SAMPLE_PERIOD = 600  # 10min
     # SAMPLE_PERIOD = 900  # 15min
+    # SAMPLE_PERIOD = 1200  # 20min
+    # SAMPLE_PERIOD = 2400  # 40min
     b = 1
 
     delta = 100  # neighbourhood
@@ -194,7 +205,8 @@ if __name__ == "__main__":
         "\n"
         "EXPERIMENT PS {}\n".format(datetime.now().isoformat()) +
         "\n"
-        " Dataset filename: {}\n".format(data_filename) +
+        " Dataset train filename: {}\n".format(data_train_fname) +
+        " Dataset test filename: {}\n".format(data_test_fname) +
         " Predictions filename: {}\n".format(prediction_filename) +
         "\n"
         " Train datetime range from {} to {}\n".format(TRAIN_START, TRAIN_END) +
@@ -208,36 +220,42 @@ if __name__ == "__main__":
         " Tolerance in diff. (phi): {}".format(phi)
     )
 
+    ELEC_TYPES = ["fridge", "washer dryer", "kettle", "dish washer", "HTPC"]
+
     patternssim_model = PatternSimilaritiesDisaggregator()
+
     """Train the model"""
-    train_model(patternssim_model, data=data_train.buildings[b].elec)
+    TRAIN_ELECTS = data_train.buildings[b].elec.from_list(
+        [m.identifier for m in data_train.buildings[b].elec.select_using_appliances(
+            type=ELEC_TYPES
+        ).meters] + [data_train.buildings[b].elec.mains().identifier]
+    )
+    train_model(patternssim_model, data=TRAIN_ELECTS)
+
     """Test the model"""
+    TEST_ELECTS = data_test.buildings[b].elec.from_list(
+        [m.identifier for m in data_test.buildings[b].elec.select_using_appliances(
+            type=ELEC_TYPES
+        ).meters] + [data_test.buildings[b].elec.mains().identifier]
+    )
     test_model(
         patternssim_model,
-        data=data_test.buildings[b].elec,
+        data=TEST_ELECTS,
         predictions_fname=prediction_filename,
     )
 
-    # prediction_filename = './predictions/PRED_2019_08_25T150427189619_datasets_h5synthetic_1YEAR_UKDALE_house1_articulo_2019_08_23T002055482660h5.h5'
+    # prediction_filename = './predictions/PRED_2019_11_14T191402232251_datasets_h5synthetic_1YEAR_UKDALE_house1_UTC_articulo_NOISE_2h5.h5'
     metric_results = calc_metrics(
-        prediction_filename, gt_data=data_test.buildings[b].elec
+        prediction_filename, gt_data=TEST_ELECTS
     )
+    METRIC_COLS = ["Fridge", "Washer dryer", "Kettle", "Dish washer", "HTPC"]
+    metric_results = metric_results.T.iloc[[0, 2, 7, 8, 1], 1:].loc[:,METRIC_COLS]
+    metric_results.index = ["TEE (kW)", "NEAP", "precision", "recall", "F-score"]
+    metric_results = metric_results.round(4)
+    metric_results.iloc[0, :] = (metric_results.iloc[0, :] / 1000).round(2)
     print(metric_results.to_string())
-
-    # corrected_predictions_fname = prediction_filename[:-3] + "_CORRECTED" + ".h5"
-    # correct_prediction_model(
-    #     model=patternssim_model,
-    #     predictions_fname=prediction_filename,
-    #     corrected_prediction_fname=corrected_predictions_fname,
-    #     # lower_limit=270,
-    #     lower_limit=lower_limit_L1,
-    #     # upper_limit=500
-    #     upper_limit=upper_limit_L2,
-    # )
-    # corrected_metric_results = calc_metrics(
-    #     corrected_predictions_fname, gt_data=data_test.buildings[b].elec
-    # )
-    # print(corrected_metric_results.to_string())
+    print("CSV FORMAT...")
+    metric_results.to_csv(sys.stdout, sep="&", line_terminator="\\\\\n")
 
     print(
         "> END experiment in {} seconds.\n"

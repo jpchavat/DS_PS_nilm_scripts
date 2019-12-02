@@ -4,6 +4,7 @@ import os
 import pandas as pd
 import numpy as np
 from os.path import join
+from sys import stdout
 
 import matplotlib
 # Comment to see plots in UI
@@ -130,7 +131,7 @@ def create_normalized_consumption(elecs, stats):
         # Replace zeros by median where consumption is greater than MIN_CONSUMPTION
         new_appliance_data[e][
             elecs[e].power_series_all_data() > MIN_CONSUMPTION
-        ] = stats[e]["median_std_1"]
+        ] = stats[e]
 
     # Creates the DataFrame with index datetime and columns each appliance
     # normalized consumption
@@ -148,11 +149,15 @@ def resample_norm_cons(norm_data):
     new_data_resampled = norm_data.resample(
         "6S"
     ).max()  # Takes just one record / appliance
-    new_data_resampled["power", "active"] = new_data_resampled.sum(axis=1)
-    new_data_resampled = new_data_resampled.fillna(value=0.0)
-    # new_data_resampled.head()
 
     return new_data_resampled
+
+
+def recalculate_total_active_power(norm_resampl_data):
+    norm_resampl_data["power", "active"] = norm_resampl_data.sum(axis=1)
+    norm_resampl_data = norm_resampl_data.fillna(value=0.0)
+
+    return norm_resampl_data
 
 
 def create_metadata_directories(base_dir):
@@ -204,18 +209,27 @@ def create_metadata_files(base_dir, data):
         f.write(meter_device)
 
     # Create a yaml metadata for the building
+    # MAIN METER
+    instance_couter = {}
+    appliances = []
+    for i, e in enumerate(ELEC_NAMES + [e[0] for e in NOISE_ELECS_SIMUL]):
+        instance_num = instance_couter.get(e, 1)
+        instance_couter[e] = instance_num + 1
+        appliances.append({"type": e, "instance": instance_num, "meters": [i + 2]})
+
     building_metadata = {
         "instance": 1,
         "elec_meters": {
             i + 1: {"site_meter": True, "device_model": "synthetic_monitor"}
             if i == 0
             else {"submeter_of": 1, "device_model": "synthetic_monitor"}
-            for i, _ in enumerate([0] + ELEC_NAMES)
+            for i, _ in enumerate([0] + ELEC_NAMES + [e[0] for e in NOISE_ELECS_SIMUL])
         },
-        "appliances": [
-            {"type": e, "instance": 1, "meters": [i + 2]}
-            for i, e in enumerate(ELEC_NAMES)
-        ],
+        "appliances": appliances,
+        # [
+        #     {"type": e, "instance": 1, "meters": [i + 2]}
+        #     for i, e in enumerate(ELEC_NAMES + [e[0] for e in NOISE_ELECS_SIMUL])
+        # ],
     }
     with open(join(BASE_DIR, "metadata", "building{}.yaml").format(b), "w") as f:
         yaml.dump(building_metadata, f, default_flow_style=False)
@@ -235,7 +249,7 @@ def create_data_files(norm_cons, building, dest_format="HDF"):
             columns=["active"],
             index=True,
         )
-        for i, e in enumerate(ELEC_NAMES):
+        for i, e in enumerate(ELEC_NAMES + [e[0] for e in NOISE_ELECS_SIMUL]):
             norm_cons["power"].to_csv(
                 path_or_buf=join(
                     BASE_DIR,
@@ -248,20 +262,53 @@ def create_data_files(norm_cons, building, dest_format="HDF"):
             )
     elif dest_format == "HDF":
         raise NotImplementedError("Destination formato not implemented")
-        # Open DataStore
-        # store = get_datastore(BASE_DIR + "h5", "HDF", mode="w")
     else:
         raise NotImplementedError("Destination formato not implemented")
 
 
-INPUT_DATASET_FILE = "/Users/jp/Documents/FIng/PruebasNILM/ukdale.h5"
+def add_noise_elecs(norm_cons_resampled, NOISE_ELECS_SIMUL):
+    # type: (pd.DataFrame, Dict[str, Dict[str, float]]) -> pd.DataFrame
+    for e, v in NOISE_ELECS_SIMUL:
+        # Initialize with zeros
+        norm_cons_resampled["power", e] = pd.Series(
+            index=norm_cons_resampled.index, data=0.0
+        )
+        # Calculate the ON status
+        n = 0
+        while n < norm_cons_resampled.shape[0]:
+            off_length = np.floor(
+                (-1/v.get("lambda")) * np.log(1 - np.random.uniform(0, 1))
+            ) + 1
+            on_length = np.floor(
+                (-1/v.get("mu")) * np.log(1 - np.random.uniform(0, 1))
+            ) + 1
+            # Set ON load in ON range
+            norm_cons_resampled.iloc[int(n + off_length):int(n + off_length + on_length), -1] = v.get("load")
+            n += off_length + on_length
+
+    return norm_cons_resampled
+
+
+INPUT_DATASET_FILE = "/Users/jp/Documents/FIng/Maestria/nilm-scripts/datasets_h5/ukdale.h5"
 BUILDINGS = [1]
-BASE_DIR = "/Users/jp/Documents/FIng/PruebasNILM/synthetic_dataset_1YEAR_UKDALE_house1_UTC_articulo"
+BASE_DIR = "/Users/jp/Documents/FIng/Maestria/nilm-scripts/datasets_csv_metadata/synthetic_1YEAR_UKDALE_house1_UTC_articulo_NOISE-3"
 ELEC_NAMES = ["fridge", "washer dryer", "kettle", "dish washer", "HTPC"]
+# ELEC_NAMES = ["fridge"]#, "washer dryer", "kettle", "dish washer", "HTPC"]
 START_RANGE = "2013-01-01 00:00:00"
 END_RANGE = "2013-12-31 23:59:59"
+NOISE_ELECS_SIMUL = [
+    ("light", {"lambda": 6/3600, "mu": 6/300, "load": 8}),
+    ("light", {"lambda": 6/3600, "mu": 6/300, "load": 8}),
+    ("light", {"lambda": 6/3600, "mu": 6/300, "load": 8}),
+    ("lamp", {"lambda": 6/1500, "mu": 6/300, "load": 10}),
+    ("lamp", {"lambda": 6/1500, "mu": 6/300, "load": 10}),
+    ("lamp", {"lambda": 6/1500, "mu": 6/300, "load": 10}),
+    ("microwave", {"lambda": 6/7200, "mu": 6/100, "load": 2000}),
+    ("television", {"lambda": 6/30000, "mu": 6/7500, "load": 40}),
+]
 
 MIN_CONSUMPTION = 5.0
+
 
 if __name__ == "__main__":
     # Load the dataset
@@ -276,27 +323,58 @@ if __name__ == "__main__":
         elecs = data.buildings[b].elec
 
         print("> Calculating stats...", end='')
-        elecs_stats = calc_elec_stats(elecs=elecs, print_results=False)
+        stdout.flush()
+        # elecs_stats = calc_elec_stats(elecs=elecs, print_results=False)
         print("FINISH")
+        stdout.flush()
 
         print("> Normalizing consumptions...", end='')
-        norm_cons = create_normalized_consumption(elecs, stats=elecs_stats)
+        stdout.flush()
+        # USE values of median into filtered by std 1
+        # values = {}
+        # for e, stat in elecs_stats.items():
+        #     values[e] = stat["median_std_1"]
+        # USE constant values
+        values = dict(zip(ELEC_NAMES, [250., 2000., 2500., 2500., 80.]))
+        norm_cons = create_normalized_consumption(elecs, stats=values)
         print("FINISH")
+        stdout.flush()
 
         print("> Resampling consumptions...", end='')
+        stdout.flush()
         norm_cons_resampled = resample_norm_cons(norm_cons)
         print("FINISH")
+        stdout.flush()
+
+        print("> Adding simulation of noise elecs...", end='')
+        stdout.flush()
+        norm_cons_resampled = add_noise_elecs(norm_cons_resampled, NOISE_ELECS_SIMUL)
+        print("FINISH")
+        stdout.flush()
+
+        print("> Recalculating total active power...", end='')
+        stdout.flush()
+        norm_cons_resampled = recalculate_total_active_power(norm_cons_resampled)
+        print("FINISH")
+        stdout.flush()
 
         print("> Creating metadata directories...", end='')
+        stdout.flush()
         create_metadata_directories(base_dir=BASE_DIR)
         print("FINISH")
+        stdout.flush()
 
         print("> Creating metadata files...", end='')
+        stdout.flush()
         create_metadata_files(base_dir=BASE_DIR, data=data)
         print("FINISH")
+        stdout.flush()
 
         print("> Creating data files...", end='')
+        stdout.flush()
         create_data_files(norm_cons_resampled, building=b, dest_format="CSV")
         print("FINISH")
+        stdout.flush()
 
         print("END")
+        stdout.flush()
